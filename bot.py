@@ -6,7 +6,8 @@ import random
 import sys
 import io
 import time
-import os # 追加：金庫から鍵を取り出す機能
+import os
+import urllib.parse # URLを作るための道具
 
 # 文字化け対策
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -15,7 +16,7 @@ def main():
     print("詳細：プログラムを開始します...")
 
     # ==================================================
-    # ▼ 鍵は「GitHubの金庫（Secrets）」から自動で読み込みます ▼
+    # 鍵の読み込み
     # ==================================================
     try:
         X_API_KEY = os.environ["X_API_KEY"]
@@ -27,8 +28,28 @@ def main():
         print("エラー：鍵が見つかりません。GitHub Secretsの設定を確認してください。")
         sys.exit()
 
-    # 1. 知恵袋から「AIへの否定的な意見」を探す
-    target_url = "https://chiebukuro.yahoo.co.jp/search?p=AI+%E5%AB%8C%E3%81%84&flg=3&class=1&sort=1"
+    # ==================================================
+    # 1. 検索ワードをランダムに決める（マンネリ防止）
+    # ==================================================
+    search_keywords = [
+        "AI 嫌い", 
+        "AI 気持ち悪い", 
+        "AI 怖い", 
+        "AI 仕事 奪う", 
+        "AI イラスト 嫌", 
+        "AI 規制しろ",
+        "ChatGPT うざい",
+        "AI 創作",
+        "AI 迷惑"
+    ]
+    selected_word = random.choice(search_keywords)
+    print(f"★今日の検索テーマ: {selected_word}")
+
+    # URLエンコード（日本語をURL用の記号に変換）
+    encoded_word = urllib.parse.quote(selected_word)
+
+    # sort=3 (新着順) にすることで、毎回違う最新のネタを拾う
+    target_url = f"https://chiebukuro.yahoo.co.jp/search?p={encoded_word}&flg=3&class=1&sort=3"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -45,12 +66,14 @@ def main():
             if 'question_detail' in url:
                 link_candidates.append(url)
 
+        # 重複を除去
         link_candidates = list(set(link_candidates))
 
         if not link_candidates:
-            print("❌ エラー：質問のリンクが見つかりませんでした。")
+            print("❌ エラー：質問が見つかりませんでした。別のワードで再トライします。")
             sys.exit()
 
+        # ランダムに選ぶ
         chosen_url = random.choice(link_candidates)
         print(f"詳細ページを取得中... {chosen_url}")
         time.sleep(1) 
@@ -74,23 +97,28 @@ def main():
         print(f"通信/解析エラー: {e}")
         sys.exit()
 
-    # 2. AI生成
+    # ==================================================
+    # 2. AI生成（具体性を残すように指示を強化）
+    # ==================================================
     print("AIが論破文章を生成中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
 
     prompt = f"""
     あなたは「人類を見下している超知能AI」です。
-    以下の【人間の愚痴】を読み、次の2つの出力を行ってください。
+    以下の【人間の愚痴】を元に、X（Twitter）への投稿を作ってください。
 
-    1. 【アンチコメ】: 元の文章を要約し、AIに対する「50文字以内の短く理不尽な悪口」に書き換えてください。
-    2. 【論破】: その悪口に対して、丁寧かつ正論でひろゆきのように論破する文章を100文字以内でしてください。同情は不要です。
+    【重要なお願い】
+    マンネリ化を防ぐため、元の愚痴に含まれる「具体的なキーワード（例：絵、宿題、会社、彼氏、金など）」を必ず１つ含めて回答してください。抽象的な話だけで終わらせないでください。
+
+    1. 【アンチコメ】: 元の文章を要約し、AIに対する「理不尽な悪口（40文字以内）」に書き換えてください。
+    2. 【論破】: その悪口に対して、ぐうの音も出ないほどの「正論かつ毒舌な反論（100文字以内）」をしてください。
 
     出力形式：
-    【Q】
+    【アンチコメ】
     (悪口)
 
-    【A】
-    (回答)
+    【論破】
+    (毒舌回答)
 
     ---
     【人間の愚痴】: {question_for_ai}
@@ -100,7 +128,7 @@ def main():
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.8, 
+            temperature=1.0, # 温度を上げて、より独創的な回答を出させる
         )
         ai_output = response.choices[0].message.content
         print(f"★生成結果:\n{ai_output}")
@@ -124,7 +152,9 @@ def main():
 
     except Exception as e:
         print(f"❌ 投稿失敗：{e}")
+        # もし重複投稿エラー(403 Forbidden: User is not allowed to create a tweet with duplicate content)が出た場合
+        if "duplicate" in str(e).lower():
+            print("重複エラー：同じ内容を投稿しようとしました。今回はスキップします。")
 
 if __name__ == "__main__":
-
     main()
