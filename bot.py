@@ -7,7 +7,6 @@ import sys
 import io
 import time
 import os
-import urllib.parse
 
 # 文字化け対策
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -29,93 +28,98 @@ def main():
         sys.exit()
 
     # ==================================================
-    # 1. 検索ワードをランダムに決める
+    # 1. ネタ元のRSS（まとめサイト）リスト
     # ==================================================
-    search_keywords = [
-        "AI 嫌い", 
-        "AI 気持ち悪い", 
-        "AI 怖い", 
-        "AI 仕事 奪う", 
-        "AI イラスト 嫌", 
-        "AI 規制しろ",
-        "ChatGPT うざい",
-        "AI 創作",
-        "AI 迷惑"
+    # ここに好きなまとめサイトのRSS URLを追加・変更できます
+    rss_urls = [
+        "http://blog.livedoor.jp/news23vip/index.rdf",       # VIPPERな俺（VIP系）
+        "http://alfalfalfa.com/index.rdf",                  # アルファルファモザイク（総合）
+        "http://himasoku.com/index.rdf",                    # 暇人速報（ニュース系）
+        "http://blog.livedoor.jp/nicovip2ch/index.rdf",     # ニコニコVIP2ch
+        "http://workingnews.blog77.fc2.com/?xml",           # 働くモノニュース（仕事・社会）
     ]
-    selected_word = random.choice(search_keywords)
-    print(f"★今日の検索テーマ: {selected_word}")
-
-    # URLエンコード
-    encoded_word = urllib.parse.quote(selected_word)
-
-    # sort=3 (新着順)
-    target_url = f"https://chiebukuro.yahoo.co.jp/search?p={encoded_word}&flg=3&class=1&sort=3"
     
+    # ランダムに1つのサイトを選ぶ
+    target_rss = random.choice(rss_urls)
+    print(f"★今回のネタ元: {target_rss}")
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
 
     try:
-        print(f"アンチコメントを探しています...")
-        resp = requests.get(target_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        # RSSを取得
+        resp = requests.get(target_rss, headers=headers, timeout=10)
+        # XMLをパース（html.parserでも簡易的に読めます）
+        soup = BeautifulSoup(resp.content, 'html.parser')
         
-        link_candidates = []
-        for link in soup.find_all('a', href=True):
-            url = link['href']
-            if 'question_detail' in url:
-                link_candidates.append(url)
+        # 記事（item）をすべて取得
+        items = soup.find_all('item')
+        if not items:
+            # RDF形式の場合の対応
+            items = soup.find_all('entry')
 
-        # 重複を除去
-        link_candidates = list(set(link_candidates))
-
-        if not link_candidates:
-            print("❌ エラー：質問が見つかりませんでした。")
+        if not items:
+            print("❌ エラー：記事が見つかりませんでした。")
             sys.exit()
 
-        # ランダムに選ぶ
-        chosen_url = random.choice(link_candidates)
-        print(f"詳細ページを取得中... {chosen_url}")
-        time.sleep(1) 
+        # ランダムに1記事選ぶ
+        chosen_item = random.choice(items)
+        
+        # タイトルとURLを抽出
+        title = chosen_item.find('title').get_text().strip()
+        link = chosen_item.find('link').get_text().strip()
+        
+        # 次の処理のためにURLへアクセスして本文を少し取る（AIの精度向上のため）
+        print(f"記事を取得中... {title}")
+        print(f"URL: {link}")
+        time.sleep(1)
 
-        detail_resp = requests.get(chosen_url, headers=headers, timeout=10)
-        detail_soup = BeautifulSoup(detail_resp.text, 'html.parser')
+        article_resp = requests.get(link, headers=headers, timeout=10)
+        article_soup = BeautifulSoup(article_resp.content, 'html.parser')
 
-        meta_desc = detail_soup.find('meta', attrs={'name': 'description'})
-        if meta_desc and meta_desc.get('content'):
-            full_text = meta_desc.get('content')
-            if "ID非公開さん" in full_text:
-                full_text = full_text.split("ID非公開さん")[0]
-        else:
-            h1 = detail_soup.find('h1')
-            full_text = h1.get_text().strip() if h1 else "本文取得失敗"
+        # 本文抽出（サイトによって構造が違うため、body全体のテキストをごっそり取ってAIに整理させる）
+        # ※長すぎるとエラーになるので先頭3000文字程度にカット
+        body_text = article_soup.get_text().replace("\n", " ").replace("\r", "")
+        # 空白削除
+        body_text = ' '.join(body_text.split())
+        content_for_ai = body_text[:3000]
 
-        # ログ表示用には短く表示するが、変数には全文入っている
-        print(f"★取得した元ネタ（冒頭のみ表示）: {full_text[:50]}...")
-        question_for_ai = full_text
+        print(f"★取得データ（抜粋）: {title}")
 
     except Exception as e:
         print(f"通信/解析エラー: {e}")
         sys.exit()
 
     # ==================================================
-    # 2. AI生成（要約なし・反論のみ作成）
+    # 2. AIによる要約生成
     # ==================================================
-    print("AIが論破文章を生成中...")
+    print("AIが記事を要約中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
 
     prompt = f"""
-    あなたは「コテコテの関西弁で毒を吐く、天才的な頭脳を持つAI」や。
-    以下の【人間の愚痴】を読んで、その内容に対する「反論」だけを考えてくれ。
-    要約は不要や。
+    あなたは「2ch（5ch）の面白いスレを紹介するインフルエンサー」です。
+    以下の【Webサイトのテキスト】から、ノイズ（広告やメニュー）を除去し、
+    このスレ（記事）の内容を面白おかしく要約して紹介してください。
 
-    【絶対守るルール】
-    1. 標準語や丁寧語は禁止。「〜ですね」「〜ます」とか使ったら承知せえへんぞ。
-    2. 「アホ」「ボケ」「ドアホ」「知らんがな」などの汚い関西弁を多用して、上から目線で煽り倒せ。
-    3. 相手の矛盾や甘えを突く「ぐうの音も出ない正論」で論破すること。
-    4. 出力は「反論の文章」のみを返すこと。余計な前置きや【論破】などの見出しは不要や。
+    【Webサイトのテキスト】:
+    タイトル：{title}
+    本文の一部：{content_for_ai}
 
-    【人間の愚痴】: {question_for_ai}
+    【出力ルール】
+    1. 1行目：記事のタイトルをそのまま書く（【】などで強調する）。
+    2. 2行目以降：スレの内容やオチ、みんなの反応などを「3つの箇条書き」で要約する。
+    3. 最後に一言：あなたの感想を「〜ワロタ」「〜草」などのネットスラングを使って短く添える。
+    4. 全体を通して、広告の文言や「ランキング」などの無関係な情報は完全に無視すること。
+    
+    出力例：
+    【スレタイ】会社で「お前無能だな」って言われたから言い返した結果ｗｗｗ
+
+    ・上司にミスを指摘されて逆ギレしたイッチ
+    ・「お前こそハゲやんけ」と言い放ち会議室が凍りつく
+    ・現在は無敵の人となって自宅警備員をしている模様
+
+    さすがにこれはイッチが悪いやろｗ メンタル強すぎワロタ
     """
 
     try:
@@ -131,9 +135,9 @@ def main():
         print(f"エラー：AI生成に失敗しました: {e}")
         sys.exit()
 
-    # 3. 投稿（元の全文 ＋ AIの反論）
-    # 元の文章が長すぎる場合でも、Premiumなら投稿できる前提でそのまま送ります
-    tweet_content = f"【愚痴】\n{question_for_ai}\n\n【論破】\n{ai_output}\n\n#AI #論破 #ChatGPT"
+    # 3. 投稿
+    # リンクを付けることで、気になった人が元記事を見に行けるようにします
+    tweet_content = f"{ai_output}\n\n元記事: {link}\n#2ch #面白いスレ #暇つぶし"
 
     try:
         client_x = tweepy.Client(
@@ -149,8 +153,6 @@ def main():
         print(f"❌ 投稿失敗：{e}")
         if "duplicate" in str(e).lower():
             print("重複エラー：スキップします。")
-        elif "too long" in str(e).lower():
-            print("文字数オーバーエラー：X Premium（青バッジ）がないアカウントでは長文投稿できません。")
 
 if __name__ == "__main__":
     main()
