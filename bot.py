@@ -6,7 +6,6 @@ import sys
 import io
 import os
 import datetime
-import random
 
 # 文字化け対策
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -28,52 +27,54 @@ def main():
         sys.exit()
 
     # ==================================================
-    # 1. Googleトレンド（日本）を取得
+    # 1. トレンド取得（2段構え）
     # ==================================================
-    rss_url = "https://trends.google.co.jp/trends/trendingsearches/daily/rss?geo=JP"
-    
-    # 【修正点】Googleにブロックされないよう、ブラウザのフリをするための設定
+    # URLリスト（上から順に試す）
+    rss_sources = [
+        # 1. Googleトレンド（Daily）: .co.jp ではなく .com を使用
+        "https://trends.google.com/trends/trendingsearches/daily/rss?geo=JP",
+        # 2. Googleニュース（バックアップ）: トレンドが死んでいてもニュースは取れる
+        "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
+    ]
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
+
+    trend_list = []
     
-    try:
-        print("Googleトレンドを取得中...")
-        resp = requests.get(rss_url, headers=headers, timeout=10)
-        
-        # ステータスコードのチェック（200以外ならエラー）
-        if resp.status_code != 200:
-            print(f"❌ エラー：Googleへのアクセスが拒否されました (Status: {resp.status_code})")
-            sys.exit()
+    for rss_url in rss_sources:
+        try:
+            print(f"トレンド取得を試行中... ({rss_url[:30]}...)")
+            resp = requests.get(rss_url, headers=headers, timeout=10)
+            
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.content, 'html.parser')
+                items = soup.find_all('item')
+                
+                if items:
+                    for item in items[:15]:
+                        title_tag = item.find('title')
+                        if title_tag:
+                            trend_list.append(title_tag.get_text())
+                    
+                    if trend_list:
+                        print("✅ 取得成功！")
+                        break # 成功したらループを抜ける
+            else:
+                print(f"⚠️ 取得失敗 (Status: {resp.status_code})。次のソースを試します。")
 
-        # html.parser で解析
-        soup = BeautifulSoup(resp.content, 'html.parser')
-        
-        items = soup.find_all('item')
-        
-        if not items:
-            print("❌ エラー：トレンド記事が見つかりませんでした（フォーマット変更の可能性あり）。")
-            # デバッグ用にレスポンスの一部を表示
-            print(f"取得したデータ先頭: {resp.text[:100]}...")
-            sys.exit()
+        except Exception as e:
+            print(f"⚠️ エラー発生: {e}。次のソースを試します。")
+            continue
 
-        # トレンド単語のリストを作成
-        trend_list = []
-        for item in items[:15]:
-            title_tag = item.find('title')
-            if title_tag:
-                trend_list.append(title_tag.get_text())
-        
-        if not trend_list:
-             print("❌ トレンド単語の抽出に失敗しました。")
-             sys.exit()
-
-        trends_str = ", ".join(trend_list)
-        print(f"★取得したトレンド候補: {trends_str}")
-
-    except Exception as e:
-        print(f"通信/解析エラー: {e}")
+    # どちらもダメだった場合
+    if not trend_list:
+        print("❌ すべてのソースからトレンド取得に失敗しました。")
         sys.exit()
+
+    trends_str = ", ".join(trend_list)
+    print(f"★使用するトレンド候補: {trends_str}")
 
     # ==================================================
     # 2. AIによる「大喜利お題」生成
