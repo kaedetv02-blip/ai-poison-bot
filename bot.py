@@ -35,8 +35,10 @@ def main():
     try:
         print("Googleトレンドを取得中...")
         resp = requests.get(rss_url, timeout=10)
-        # lxmlパーサーでXMLを解析
-        soup = BeautifulSoup(resp.content, 'xml')
+        
+        # 【修正点】 'xml' ではなく標準の 'html.parser' を使用
+        # これなら追加インストール不要で動きます
+        soup = BeautifulSoup(resp.content, 'html.parser')
         
         items = soup.find_all('item')
         
@@ -47,9 +49,15 @@ def main():
         # トレンド単語のリストを作成（上位15件ほど）
         trend_list = []
         for item in items[:15]:
-            title = item.find('title').text
-            trend_list.append(title)
+            # html.parserを使う場合、タグが見つからない可能性も考慮して安全に取得
+            title_tag = item.find('title')
+            if title_tag:
+                trend_list.append(title_tag.get_text())
         
+        if not trend_list:
+             print("❌ トレンド単語が見つかりませんでした。")
+             sys.exit()
+
         # リストをカンマ区切りの文字列にする（AIに渡すため）
         trends_str = ", ".join(trend_list)
         print(f"★取得したトレンド候補: {trends_str}")
@@ -64,7 +72,7 @@ def main():
     print("AIが大喜利のお題を考案中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # 現在の日時（季節感を出すため）
+    # 現在の日時
     now = datetime.datetime.now()
     date_str = now.strftime("%m月%d日")
 
@@ -94,7 +102,7 @@ def main():
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=1.0, # 創造性を高くする
+            temperature=1.0, 
         )
         ai_output = response.choices[0].message.content
         print(f"★生成結果:\n{ai_output}")
@@ -104,7 +112,6 @@ def main():
         sys.exit()
 
     # 3. 投稿
-    # 出力そのまま投稿
     tweet_content = ai_output
 
     try:
