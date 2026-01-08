@@ -6,6 +6,7 @@ import sys
 import io
 import os
 import datetime
+import random
 
 # 文字化け対策
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -29,36 +30,44 @@ def main():
     # ==================================================
     # 1. Googleトレンド（日本）を取得
     # ==================================================
-    # Google TrendsのRSSフィード（日本）
     rss_url = "https://trends.google.co.jp/trends/trendingsearches/daily/rss?geo=JP"
+    
+    # 【修正点】Googleにブロックされないよう、ブラウザのフリをするための設定
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
     
     try:
         print("Googleトレンドを取得中...")
-        resp = requests.get(rss_url, timeout=10)
+        resp = requests.get(rss_url, headers=headers, timeout=10)
         
-        # 【修正点】 'xml' ではなく標準の 'html.parser' を使用
-        # これなら追加インストール不要で動きます
+        # ステータスコードのチェック（200以外ならエラー）
+        if resp.status_code != 200:
+            print(f"❌ エラー：Googleへのアクセスが拒否されました (Status: {resp.status_code})")
+            sys.exit()
+
+        # html.parser で解析
         soup = BeautifulSoup(resp.content, 'html.parser')
         
         items = soup.find_all('item')
         
         if not items:
-            print("❌ エラー：トレンドが取得できませんでした。")
+            print("❌ エラー：トレンド記事が見つかりませんでした（フォーマット変更の可能性あり）。")
+            # デバッグ用にレスポンスの一部を表示
+            print(f"取得したデータ先頭: {resp.text[:100]}...")
             sys.exit()
 
-        # トレンド単語のリストを作成（上位15件ほど）
+        # トレンド単語のリストを作成
         trend_list = []
         for item in items[:15]:
-            # html.parserを使う場合、タグが見つからない可能性も考慮して安全に取得
             title_tag = item.find('title')
             if title_tag:
                 trend_list.append(title_tag.get_text())
         
         if not trend_list:
-             print("❌ トレンド単語が見つかりませんでした。")
+             print("❌ トレンド単語の抽出に失敗しました。")
              sys.exit()
 
-        # リストをカンマ区切りの文字列にする（AIに渡すため）
         trends_str = ", ".join(trend_list)
         print(f"★取得したトレンド候補: {trends_str}")
 
@@ -71,10 +80,6 @@ def main():
     # ==================================================
     print("AIが大喜利のお題を考案中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
-
-    # 現在の日時
-    now = datetime.datetime.now()
-    date_str = now.strftime("%m月%d日")
 
     prompt = f"""
     あなたはX（Twitter）で大人気の「大喜利Bot」です。
