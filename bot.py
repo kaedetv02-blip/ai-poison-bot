@@ -30,7 +30,7 @@ def main():
     # 1. Yahoo!知恵袋からネタ（種）を収集
     # ==================================================
     # 修正：ランキングページではなく「トップページ」を使用（確実性重視）
-    chiebukuro_url = "https://chiebukuro.yahoo.co.jp/"
+    chiebukuro_url = "https://chiebukuro.yahoo.co.jp"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -132,3 +132,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
