@@ -5,13 +5,13 @@ from openai import OpenAI
 import sys
 import io
 import os
-import datetime
+import random
 
 # 文字化け対策
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 def main():
-    print("詳細：大喜利Botプログラム（こんな〇〇は嫌だVer）を開始します...")
+    print("詳細：架空謝罪会見Bot（知恵袋ソース）を開始します...")
 
     # ==================================================
     # 鍵の読み込み
@@ -27,89 +27,72 @@ def main():
         sys.exit()
 
     # ==================================================
-    # 1. トレンド取得（2段構え）
+    # 1. Yahoo!知恵袋からネタ（種）を収集
     # ==================================================
-    # URLリスト（上から順に試す）
-    rss_sources = [
-        # 1. Googleトレンド（Daily）: .com (国際版の日本リージョン)
-        "https://trends.google.com/trends/trendingsearches/daily/rss?geo=JP",
-        # 2. Googleニュース（バックアップ）
-        "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
-    ]
-
+    # 総合ランキングのURL
+    chiebukuro_url = "https://chiebukuro.yahoo.co.jp/ranking/comprehensive"
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
 
-    trend_list = []
-    
-    for rss_url in rss_sources:
-        try:
-            print(f"トレンド取得を試行中... ({rss_url[:30]}...)")
-            resp = requests.get(rss_url, headers=headers, timeout=10)
+    topics = []
+
+    try:
+        print("知恵袋ランキングを取得中...")
+        resp = requests.get(chiebukuro_url, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.content, 'html.parser')
+            # リンクのテキストから質問タイトルらしきものを抽出
+            # 知恵袋のクラス名は変わるので、ざっくりとaタグの中身を洗う
+            links = soup.find_all('a')
+            for link in links:
+                text = link.get_text().strip()
+                # 質問タイトルっぽい長さのものだけ拾う（短すぎず長すぎず）
+                if 10 < len(text) < 50:
+                    topics.append(text)
             
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.content, 'html.parser')
-                items = soup.find_all('item')
-                
-                if items:
-                    for item in items[:15]:
-                        title_tag = item.find('title')
-                        if title_tag:
-                            trend_list.append(title_tag.get_text())
-                    
-                    if trend_list:
-                        print("✅ 取得成功！")
-                        break # 成功したらループを抜ける
-            else:
-                print(f"⚠️ 取得失敗 (Status: {resp.status_code})。次のソースを試します。")
+            if not topics:
+                print("⚠️ 知恵袋からうまくテキストが取れませんでした。デモデータを使用します。")
+                topics = ["きのこの山とたけのこの里どっちが好き？", "目玉焼きに何をかけますか？", "靴下を裏返しで履いてしまいました"]
+        else:
+            print(f"⚠️ 知恵袋アクセス失敗: Status {resp.status_code}")
+            topics = ["プリンを勝手に食べた", "リモコンの電池を抜いたまま放置した", "トイレットペーパーの芯を替えない"]
 
-        except Exception as e:
-            print(f"⚠️ エラー発生: {e}。次のソースを試します。")
-            continue
+    except Exception as e:
+        print(f"⚠️ エラー発生: {e}")
+        topics = ["賞味期限切れの牛乳を飲んだ", "エレベーターの閉めるボタンを連打した"]
 
-    # どちらもダメだった場合
-    if not trend_list:
-        print("❌ すべてのソースからトレンド取得に失敗しました。")
-        sys.exit()
-
-    trends_str = ", ".join(trend_list)
-    print(f"★使用するトレンド候補: {trends_str}")
+    # 取得したネタからランダムに1つ選ぶ
+    selected_topic = random.choice(topics[:15]) # 上位15個くらいから選ぶ
+    print(f"★選ばれたネタ（不祥事の種）: {selected_topic}")
 
     # ==================================================
-    # 2. AIによる「大喜利お題」生成
+    # 2. AIによる「架空の謝罪文」生成
     # ==================================================
-    print("AIが大喜利のお題を考案中...")
+    print("AIが謝罪文を作成中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # 変更点：形式を「こんな〇〇は嫌だ」に固定するよう指示を修正
     prompt = f"""
-    あなたはX（Twitter）で大人気の「大喜利Bot」です。
-    以下の【トレンド単語リスト】から1つを選び、それを題材に大喜利のお題を作ってください。
+    あなたは社会的地位のある人物（政治家やCEO）として「緊急謝罪会見」を行ってください。
+    以下の【知恵袋の質問】をヒントにして、「あまりにもくだらない架空の不祥事」をでっち上げ、死ぬほど真面目なトーンで謝罪してください。
 
-    【トレンド単語リスト】
-    {trends_str}
+    【ネタ元（知恵袋の質問）】
+    {selected_topic}
 
-    【絶対厳守の形式】
-    お題は必ず**「こんな〇〇は嫌だ」**という文章にしてください。
-    （例：「こんな新入社員は嫌だ」「こんな卒業式は嫌だ」「こんなRPGは嫌だ」）
-
-    【ルール】
-    1. **言葉の変換**: トレンド単語が固有名詞（人名や具体的な作品名）の場合、そのまま使わずに「職業名」や「ジャンル名」などの広い言葉に置き換えてください。
-       * 悪い例：トレンドが「ドラクエ3」 → 「こんなドラクエ3は嫌だ」（範囲が狭すぎる）
-       * 良い例：トレンドが「ドラクエ3」 → 「こんな勇者は嫌だ」または「こんなRPGは嫌だ」（広くて答えやすい）
-    2. **安全第一**: 事件・事故・政治・誰かが傷つく話題は絶対に避けてください。
-    3. **バラエティ**: 「RPG」ネタばかりにならないよう、日常、学校、会社、恋愛、スポーツなど幅広いジャンルから発想してください。
+    【指示】
+    1. **内容**: ネタ元を参考に、「きのこの山をたけのこの里の箱に入れた」「靴下の左右を間違えた」レベルの、**誰も傷つかないどうでもいい罪**を告白してください。
+    2. **トーン**: 報道陣のフラッシュが見えるくらい、**重苦しく、誠実で、シリアスな文体**にしてください。
+    3. **ギャップ**: 「内容はアホなのに、文章は企業の不祥事謝罪レベル」というギャップで笑わせてください。
+    4. **長さ**: 140字ギリギリまで使って状況を説明してください。
 
     【出力形式】
-    以下の形式のみを出力してください。（余計な挨拶は不要）
+    以下の形式のみを出力してください。
 
-    【お題】
-    こんな〇〇は嫌だ
-
-    #大喜利 #IPPON #フォロバ100
-
-    ★いいね数が一番多い人が優勝！
+    【謝罪会見】
+    (ここに謝罪文)
+    #架空謝罪会見 #フォロバ100
     """
 
     try:
@@ -140,11 +123,6 @@ def main():
 
     except Exception as e:
         print(f"❌ 投稿失敗：{e}")
-        if "duplicate" in str(e).lower():
-            print("重複エラー：スキップします。")
 
 if __name__ == "__main__":
     main()
-
-
-
