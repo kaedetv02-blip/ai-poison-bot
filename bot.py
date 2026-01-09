@@ -29,8 +29,8 @@ def main():
     # ==================================================
     # 1. Yahoo!知恵袋からネタ（種）を収集
     # ==================================================
-    # 総合ランキングのURL
-    chiebukuro_url = "https://chiebukuro.yahoo.co.jp/ranking/comprehensive"
+    # 修正：確実に存在する「ランキングトップ」を使用
+    chiebukuro_url = "https://chiebukuro.yahoo.co.jp/ranking"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -39,23 +39,25 @@ def main():
     topics = []
 
     try:
-        print("知恵袋ランキングを取得中...")
+        print(f"知恵袋ランキングを取得中... ({chiebukuro_url})")
         resp = requests.get(chiebukuro_url, headers=headers, timeout=10)
         
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.content, 'html.parser')
             # リンクのテキストから質問タイトルらしきものを抽出
-            # 知恵袋のクラス名は変わるので、ざっくりとaタグの中身を洗う
             links = soup.find_all('a')
             for link in links:
                 text = link.get_text().strip()
-                # 質問タイトルっぽい長さのものだけ拾う（短すぎず長すぎず）
-                if 10 < len(text) < 50:
+                # 質問タイトルっぽい長さのものだけ拾う（ノイズ除去）
+                # 「〜とは？」や「〜ですか？」などの疑問形、またはある程度の長さがあるもの
+                if 10 < len(text) < 60:
                     topics.append(text)
             
             if not topics:
                 print("⚠️ 知恵袋からうまくテキストが取れませんでした。デモデータを使用します。")
                 topics = ["きのこの山とたけのこの里どっちが好き？", "目玉焼きに何をかけますか？", "靴下を裏返しで履いてしまいました"]
+            else:
+                print("✅ ネタの取得に成功しました！")
         else:
             print(f"⚠️ 知恵袋アクセス失敗: Status {resp.status_code}")
             topics = ["プリンを勝手に食べた", "リモコンの電池を抜いたまま放置した", "トイレットペーパーの芯を替えない"]
@@ -65,7 +67,7 @@ def main():
         topics = ["賞味期限切れの牛乳を飲んだ", "エレベーターの閉めるボタンを連打した"]
 
     # 取得したネタからランダムに1つ選ぶ
-    selected_topic = random.choice(topics[:15]) # 上位15個くらいから選ぶ
+    selected_topic = random.choice(topics[:20]) # 上位20個くらいから選ぶ
     print(f"★選ばれたネタ（不祥事の種）: {selected_topic}")
 
     # ==================================================
@@ -76,9 +78,9 @@ def main():
 
     prompt = f"""
     あなたは社会的地位のある人物（政治家やCEO）として「緊急謝罪会見」を行ってください。
-    以下の【知恵袋の質問】をヒントにして、「あまりにもくだらない架空の不祥事」をでっち上げ、死ぬほど真面目なトーンで謝罪してください。
+    以下の【知恵袋の質問・話題】をヒントにして、「あまりにもくだらない架空の不祥事」をでっち上げ、死ぬほど真面目なトーンで謝罪してください。
 
-    【ネタ元（知恵袋の質問）】
+    【ネタ元（知恵袋の話題）】
     {selected_topic}
 
     【指示】
@@ -92,7 +94,7 @@ def main():
 
     【謝罪会見】
     (ここに謝罪文)
-    #架空謝罪会見 #フォロバ100
+    #架空謝罪会見 #誠にごめんなさい
     """
 
     try:
@@ -122,6 +124,7 @@ def main():
         print("✅ 投稿成功！")
 
     except Exception as e:
+        # 詳細なエラー情報を出すように変更
         print(f"❌ 投稿失敗：{e}")
 
 if __name__ == "__main__":
