@@ -9,7 +9,7 @@ import datetime
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 def main():
-    print("詳細：架空謝罪会見Bot（脱マンネリ版）を開始します...")
+    print("詳細：架空謝罪会見Bot（バリエーション強化・完全版）を開始します...")
 
     # ==================================================
     # 鍵の読み込み
@@ -40,7 +40,7 @@ def main():
     print("AIが謝罪文を作成中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # プロンプト修正：具体的な例文を削除し、「罪のジャンル」を指定して多様性を出す
+    # プロンプト：具体的な例文を削除し、「罪のジャンル」を指定して多様性を出す
     prompt = f"""
     あなたは社会的地位のある人物（政治家やCEO）として「緊急謝罪会見」を行ってください。
     
@@ -91,8 +91,9 @@ def main():
     # ==================================================
     # 3. 投稿
     # ==================================================
-    # 連投エラー回避用スタンプ
-    now_time = now.strftime("%H:%M")
+    # 連投エラー回避用スタンプ（秒数まで含めることで完全に回避）
+    # 修正: %H:%M -> %H:%M:%S
+    now_time = now.strftime("%H:%M:%S")
     tweet_content = f"{ai_output}\n\n(更新: {now_time})"
 
     try:
@@ -103,7 +104,7 @@ def main():
             access_token_secret=X_ACCESS_TOKEN_SECRET
         )
         client_x.create_tweet(text=tweet_content)
-        print("✅ 投稿成功！")
+        print(f"✅ 投稿成功！ (時刻: {now_time})")
 
     except Exception as e:
         print(f"❌ 投稿失敗：{e}")
