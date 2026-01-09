@@ -4,12 +4,48 @@ import sys
 import io
 import os
 import datetime
+import time
+import random
+import logging
+from typing import Callable
 
 # 文字化け対策
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+def retry_with_backoff(func: Callable, *, max_attempts: int = 5, base_delay: float = 1.0, factor: float = 2.0):
+    """
+    Exponential backoff with jitter for transient errors / rate limits.
+    func: callable with no args that performs the action and returns result or raises.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return func()
+        except Exception as e:
+            # Detect likely rate limit/too-many-requests
+            text = str(e).lower()
+            is_rate_limit = ("429" in text) or ("too many requests" in text) or ("rate limit" in text)
+            if not is_rate_limit or attempt >= max_attempts:
+                logging.exception("Operation failed (no more retries or non-rate-limit): %s", e)
+                raise
+            # Backoff with jitter
+            delay = base_delay * (factor ** (attempt - 1))
+            # jitter: +- 0..delay*0.1
+            jitter = random.uniform(0, delay * 0.1)
+            sleep_for = delay + jitter
+            logging.warning("Rate limited (attempt %d/%d). Retrying after %.1f seconds...", attempt, max_attempts, sleep_for)
+            time.sleep(sleep_for)
+
 def main():
-    print("詳細：架空謝罪会見Bot（学生・青春ネタ特化版）を開始します...")
+    logging.info("詳細：架空謝罪会見Bot（学生・青春ネタ特化版）を開始します...")
 
     # ==================================================
     # 鍵の読み込み
@@ -21,8 +57,8 @@ def main():
         X_ACCESS_TOKEN_SECRET = os.environ["X_ACCESS_TOKEN_SECRET"]
         OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
     except KeyError:
-        print("❌ エラー：鍵が見つかりません。GitHub Secretsの設定を確認してください。")
-        sys.exit()
+        logging.error("❌ エラー：鍵が見つかりません。GitHub Secretsの設定を確認してください。")
+        sys.exit(1)
 
     # ==================================================
     # 1. 今日の日付を取得
@@ -31,16 +67,14 @@ def main():
     month = now.strftime('%m')
     day = now.strftime('%d')
     date_str = f"{month}月{day}日"
-    
-    print(f"本日の日付: {date_str}")
+    logging.info("本日の日付: %s", date_str)
 
     # ==================================================
-    # 2. AIによる「謝罪文」生成
+    # 2. AIによる「謝罪文」生成（リトライ付き）
     # ==================================================
-    print("AIが謝罪文を作成中...")
+    logging.info("AIが謝罪文を作成中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # プロンプト：ターゲットを「学生」に絞り、学校生活のディテールを強制する
     prompt = f"""
     あなたは社会的地位のある人物（政治家やCEO）として「緊急謝罪会見」を行ってください。
     
@@ -72,23 +106,25 @@ def main():
     #架空謝罪会見 #誠にごめんなさい #フォロバ100
     """
 
-    try:
-        response = client.chat.completions.create(
+    def call_openai():
+        return client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=1.0, 
+            temperature=1.0,
         )
+
+    try:
+        response = retry_with_backoff(call_openai, max_attempts=6, base_delay=1.0, factor=2.0)
+        # Response parsing — keep current access pattern
         ai_output = response.choices[0].message.content
-        print(f"★生成結果:\n{ai_output}")
-
+        logging.info("★生成結果:\n%s", ai_output)
     except Exception as e:
-        print(f"エラー：AI生成に失敗しました: {e}")
-        sys.exit()
+        logging.error("エラー：AI生成に失敗しました: %s", e)
+        sys.exit(1)
 
     # ==================================================
-    # 3. 投稿
+    # 3. 投稿（リトライ付き）
     # ==================================================
-    # 連投エラー回避用スタンプ（秒数まで必須）
     now_time = now.strftime("%H:%M:%S")
     tweet_content = f"{ai_output}\n\n(更新: {now_time})"
 
@@ -99,15 +135,30 @@ def main():
             access_token=X_ACCESS_TOKEN,
             access_token_secret=X_ACCESS_TOKEN_SECRET
         )
-        client_x.create_tweet(text=tweet_content)
-        print(f"✅ 投稿成功！ (時刻: {now_time})")
+    except Exception:
+        logging.exception("Twitterクライアントの初期化に失敗しました。")
+        sys.exit(1)
 
+    def call_tweet():
+        # create_tweet may raise tweepy.errors.TooManyRequests or other exceptions
+        return client_x.create_tweet(text=tweet_content)
+
+    try:
+        # Retry on rate limits
+        result = retry_with_backoff(call_tweet, max_attempts=6, base_delay=2.0, factor=2.0)
+        logging.info("✅ 投稿成功！ (時刻: %s) result: %s", now_time, result)
     except Exception as e:
-        print(f"❌ 投稿失敗：{e}")
-        if "187" in str(e):
-            print("🛑 重複エラー：内容を変えてください。")
-        elif "403" in str(e):
-            print("🛑 権限エラー：GitHubの鍵を確認してください。")
+        # More specific messaging for common error patterns
+        text = str(e).lower()
+        logging.error("❌ 投稿失敗：%s", e)
+        if "187" in text:
+            logging.error("🛑 重複エラー：内容を変えてください。")
+        elif "403" in text:
+            logging.error("🛑 権限エラー：GitHubの鍵を確認してください。")
+        elif ("429" in text) or ("too many requests" in text):
+            logging.error("🛑 レート上限に達しました。投稿間隔を開けるか、利用制限を確認してください。")
+        else:
+            logging.error("予期しないエラーです。詳細を確認してください。")
 
 if __name__ == "__main__":
     main()
