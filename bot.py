@@ -21,8 +21,7 @@ logging.basicConfig(
 
 def retry_with_backoff(func: Callable, *, max_attempts: int = 5, base_delay: float = 1.0, factor: float = 2.0):
     """
-    Exponential backoff with jitter for transient errors / rate limits.
-    func: callable with no args that performs the action and returns result or raises.
+    指数バックオフによるリトライ処理（レート制限・一時エラー対策）
     """
     attempt = 0
     while True:
@@ -30,22 +29,20 @@ def retry_with_backoff(func: Callable, *, max_attempts: int = 5, base_delay: flo
         try:
             return func()
         except Exception as e:
-            # Detect likely rate limit/too-many-requests
             text = str(e).lower()
             is_rate_limit = ("429" in text) or ("too many requests" in text) or ("rate limit" in text)
             if not is_rate_limit or attempt >= max_attempts:
                 logging.exception("Operation failed (no more retries or non-rate-limit): %s", e)
                 raise
-            # Backoff with jitter
+            
             delay = base_delay * (factor ** (attempt - 1))
-            # jitter: 0..delay*0.1
             jitter = random.uniform(0, delay * 0.1)
             sleep_for = delay + jitter
             logging.warning("Rate limited (attempt %d/%d). Retrying after %.1f seconds...", attempt, max_attempts, sleep_for)
             time.sleep(sleep_for)
 
 def main():
-    logging.info("開始：架空謝罪会見Bot を起動します...")
+    logging.info("開始：架空謝罪会見Bot (2段階生成版・改) を起動します...")
 
     # ==================================================
     # 鍵の読み込み
@@ -60,7 +57,7 @@ def main():
         logging.error("❌ エラー：鍵が見つかりません。環境変数の設定を確認してください。")
         sys.exit(1)
 
-    # モデルは環境変数で上書き可能（デフォルトはより高性能な gpt-4o）
+    # モデル設定
     MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 
     # ==================================================
@@ -72,59 +69,98 @@ def main():
     date_str = f"{month}月{day}日"
     logging.info("本日の日付: %s", date_str)
 
-    # ==================================================
-    # AIによる「謝罪文」生成（リトライ付き）
-    # ==================================================
-    logging.info("AIが謝罪文を作成中...")
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # シンプルで幅広い層に受けるプロンプト
-    system_prompt = (
-        "あなたは親切でウィットに富んだアシスタントです。"
-        "命令に従って、短くユーモアのある「架空の謝罪会見」文を生成してください。"
-        "出力は日本語で、フォーマルな口調とユーモアのギャップで笑いを誘うものにしてください。"
+    # ==================================================
+    # ステップ1：AIによる「下書き」生成
+    # ==================================================
+    logging.info("Step 1: AIがネタ（下書き）を作成中...")
+
+    draft_system_prompt = (
+        "あなたはユーモアのある脚本家です。"
+        "命令に従って、短く面白い「架空の謝罪会見」の原稿を作成してください。"
     )
 
-    user_instructions = f"""
+    draft_instructions = f"""
 今日の日付（ネタの着想元）：{date_str}
 
 指示（簡潔）:
-- 架空の公的人物が「ピザにパイナップルを乗せた」レベルのしょうもない罪を犯して謝罪するという設定で書くこと(例はあくまでも参考程度で内容はまったく異なるものにしてください)
-- 誰でも共感できるように、学生だけでなく若者〜大人まで幅広く楽しめる内容にすること。
-- 実在の人物・団体・個人名は使わない。特定の個人や団体を中傷しない。
-- 今日の日付をヒントにするが、記念日名や実際のイベント名は書かない。
-- 文字数は140字以内（日本語）。読みやすいように改行を適度に入れる。
-- 出力形式は以下の通り（厳守）:
-
+- 架空の公的人物が「ピザにパイナップルを乗せた」レベルのしょうもない罪を犯して謝罪するという設定。
+- 誰でも共感できるように、学生だけでなく若者〜大人まで幅広く楽しめる内容にする。
+- 実在の人物・団体・個人名は使わない。
+- 形式:
 【謝罪会見】
 (ここに謝罪文)
 #架空謝罪会見 #誠にごめんなさい
 """
 
-    def call_openai():
+    def call_draft():
         return client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_instructions},
+                {"role": "system", "content": draft_system_prompt},
+                {"role": "user", "content": draft_instructions},
             ],
             temperature=0.7,
-            max_tokens=200,
+            max_tokens=250,
         )
 
     try:
-        response = retry_with_backoff(call_openai, max_attempts=6, base_delay=1.0, factor=2.0)
-        ai_output = response.choices[0].message.content
-        logging.info("★生成結果:\n%s", ai_output)
+        response_draft = retry_with_backoff(call_draft, max_attempts=6)
+        draft_text = response_draft.choices[0].message.content
+        logging.info("★ Step 1 生成結果 (下書き):\n%s", draft_text)
     except Exception as e:
-        logging.error("エラー：AI生成に失敗しました: %s", e)
+        logging.error("エラー：下書き生成に失敗しました: %s", e)
+        sys.exit(1)
+
+    # ==================================================
+    # ステップ2：AIによる「推敲・修正」
+    # ==================================================
+    logging.info("Step 2: AIが文章をより自然で面白く修正中...")
+
+    # ★ここを変更しました：より面白く、自然にするための強力な指示
+    refine_system_prompt = (
+        "あなたは超一流の放送作家兼コメディアンです。"
+        "渡された原稿を、人間味あふれる自然な言葉遣いに直し、より面白く魅力的な文章に仕上げてください。"
+    )
+
+    refine_instructions = f"""
+以下の文章はAIが生成した「架空の謝罪会見」の下書きです。
+これを元に、**より自然で、かつ面白い文章**に修正してください。
+
+【修正のポイント】
+1. **自然さ**: 「AIっぽさ」や「翻訳調」を完全に排除し、人間が本当に謝罪会見で喋っているような（あるいはSNSでつぶやいているような）リアルな口語にする。
+2. **面白さ**: ユーモアのキレを上げ、読み手が思わずクスッとするような言葉選びやリズムにする。
+3. **形式維持**: 以下のフォーマットは崩さないこと。
+
+【原稿】
+{draft_text}
+"""
+
+    def call_refine():
+        return client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": refine_system_prompt},
+                {"role": "user", "content": refine_instructions},
+            ],
+            temperature=0.9, # 面白さを出すために創造性を少し高めに設定
+            max_tokens=250,
+        )
+
+    try:
+        response_refine = retry_with_backoff(call_refine, max_attempts=6)
+        final_output = response_refine.choices[0].message.content
+        logging.info("★ Step 2 生成結果 (完成版):\n%s", final_output)
+    except Exception as e:
+        logging.error("エラー：推敲生成に失敗しました: %s", e)
         sys.exit(1)
 
     # ==================================================
     # 投稿（リトライ付き）
     # ==================================================
     now_time = now.strftime("%H:%M:%S")
-    tweet_content = f"{ai_output}\n\n(更新: {now_time})"
+    tweet_content = final_output 
 
     try:
         client_x = tweepy.Client(
@@ -141,7 +177,7 @@ def main():
         return client_x.create_tweet(text=tweet_content)
 
     try:
-        result = retry_with_backoff(call_tweet, max_attempts=6, base_delay=2.0, factor=2.0)
+        result = retry_with_backoff(call_tweet, max_attempts=6, base_delay=2.0)
         logging.info("✅ 投稿成功！ (時刻: %s) result: %s", now_time, result)
     except Exception as e:
         text = str(e).lower()
@@ -151,7 +187,7 @@ def main():
         elif "403" in text:
             logging.error("🛑 権限エラー：Twitterの鍵を確認してください。")
         elif ("429" in text) or ("too many requests" in text):
-            logging.error("🛑 レート上限に達しました。投稿間隔を開けるか、利用制限を確認してください。")
+            logging.error("🛑 レート上限に達しました。")
         else:
             logging.error("予期しないエラーです。詳細を確認してください。")
 
